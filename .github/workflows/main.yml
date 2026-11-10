@@ -1,0 +1,49 @@
+name: Compilar NZILA Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: windows-2022
+
+    steps:
+      - name: Baixar projeto
+        uses: actions/checkout@v4
+
+      - name: Preparar ambiente
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Extrair projeto Android
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem -Path . -Recurse -Filter "*.zip" | Select-Object -First 1
+          if (-not $zip) {
+            throw "Ficheiro ZIP não encontrado."
+          }
+          Expand-Archive -Path $zip.FullName -DestinationPath "$env:GITHUB_WORKSPACE\projeto" -Force
+
+      - name: Restaurar dependências
+        shell: pwsh
+        run: |
+          $sln = Get-ChildItem ".\projeto" -Recurse -Filter "*.sln" | Select-Object -First 1
+          if (-not $sln) {
+            throw "Não foi encontrada uma solução Android (.sln)."
+          }
+          nuget restore $sln.FullName
+
+      - name: Compilar APK
+        shell: pwsh
+        run: |
+          $sln = Get-ChildItem ".\projeto" -Recurse -Filter "*.sln" | Select-Object -First 1
+          msbuild $sln.FullName /p:Configuration=Release /p:AndroidPackageFormat=apk /t:PackageForAndroid
+
+      - name: Guardar APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: NZILA-EMPRESTIMO-APK
+          path: projeto/**/bin/Release/**/*.apk
+          if-no-files-found: error

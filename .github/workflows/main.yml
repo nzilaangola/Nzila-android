@@ -14,36 +14,62 @@ jobs:
       - name: Baixar projeto
         uses: actions/checkout@v4
 
-      - name: Preparar ambiente
-        uses: microsoft/setup-msbuild@v2
-
-      - name: Extrair projeto Android
+      - name: Localizar ficheiro ZIP
         shell: pwsh
         run: |
-          $zip = Get-ChildItem -Path . -Recurse -Filter "*.zip" | Select-Object -First 1
+          $zip = Get-ChildItem -Path . -Recurse -Filter "NZILA-Android-pronto-para-compilacao-na-nuvem.zip" | Select-Object -First 1
           if (-not $zip) {
-            throw "Ficheiro ZIP não encontrado."
+            throw "O ficheiro ZIP Android não foi encontrado."
           }
           Expand-Archive -Path $zip.FullName -DestinationPath "$env:GITHUB_WORKSPACE\projeto" -Force
 
-      - name: Restaurar dependências
+      - name: Identificar tipo de projeto
         shell: pwsh
         run: |
-          $sln = Get-ChildItem ".\projeto" -Recurse -Filter "*.sln" | Select-Object -First 1
-          if (-not $sln) {
-            throw "Não foi encontrada uma solução Android (.sln)."
-          }
-          nuget restore $sln.FullName
+          Get-ChildItem ".\projeto" -Recurse -File |
+            Where-Object {
+              $_.Name -match 'gradlew|build.gradle|build.gradle.kts|\.sln$|\.csproj$'
+            } |
+            Select-Object -ExpandProperty FullName |
+            Out-File projeto-encontrado.txt
 
-      - name: Compilar APK
+          if (-not (Test-Path projeto-encontrado.txt) -or (Get-Item projeto-encontrado.txt).Length -eq 0) {
+            throw "Não foram encontrados ficheiros de compilação Android no ZIP."
+          }
+
+          Get-Content projeto-encontrado.txt
+
+      - name: Compilar projeto Android
         shell: pwsh
         run: |
-          $sln = Get-ChildItem ".\projeto" -Recurse -Filter "*.sln" | Select-Object -First 1
-          msbuild $sln.FullName /p:Configuration=Release /p:AndroidPackageFormat=apk /t:PackageForAndroid
+          $gradle = Get-ChildItem ".\projeto" -Recurse -Filter "gradlew.bat" | Select-Object -First 1
+
+          if ($gradle) {
+            Push-Location $gradle.Directory.FullName
+            .\gradlew.bat assembleRelease
+            Pop-Location
+          }
+          else {
+            $sln = Get-ChildItem ".\projeto" -Recurse -Filter "*.sln" | Select-Object -First 1
+            if (-not $sln) {
+              throw "O ZIP não contém uma solução Gradle ou Xamarin."
+            }
+
+            nuget restore $sln.FullName
+
+            $csproj = Get-ChildItem $sln.Directory.FullName -Recurse -Filter "*.csproj" | Select-Object -First 1
+            if (-not $csproj) {
+              throw "Projeto CSProj não encontrado."
+            }
+
+            msbuild $csproj.FullName /t:PackageForAndroid /p:Configuration=Release /p:AndroidPackageFormat=apk
+          }
 
       - name: Guardar APK
         uses: actions/upload-artifact@v4
         with:
           name: NZILA-EMPRESTIMO-APK
-          path: projeto/**/bin/Release/**/*.apk
+          path: |
+            projeto/**/*.apk
+            projeto/**/bin/Release/**/*.apk
           if-no-files-found: error
